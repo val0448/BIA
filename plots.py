@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from functions import registry
 
 def surface_grid(function, lb: np.ndarray, ub: np.ndarray, grid_points: int=120):
+    """Generate a grid for surface/contour plots of a 2D function."""
     x = np.linspace(lb[0], ub[0], grid_points)
     y = np.linspace(lb[1], ub[1], grid_points)
     X, Y = np.meshgrid(x, y)
@@ -54,12 +55,7 @@ def plot_contour(fn_name: str, grid=400, levels=60, cmap='viridis'):
 
 
 def plot_1d_slice(fn_name: str, fixed_coords: dict = None, axis=0, npoints=400):
-    """
-    Plot 1D slice of f along one coordinate while fixing others.
-    - fixed_coords: dict of {index: value} for coordinates to fix (0-based)
-    - axis: which axis to vary (0..d-1)
-    Useful for d > 2: visualize function along a line parallel to one axis.
-    """
+    """Plot 1D slice of f along one coordinate while fixing others."""
     bf = registry[fn_name]
     # choose dimension d from bounds
     lb, ub = bf.bounds
@@ -85,10 +81,7 @@ def plot_1d_slice(fn_name: str, fixed_coords: dict = None, axis=0, npoints=400):
     plt.show()
 
 def plot_surface_and_path(ax, X, Y, Z, path_points: np.ndarray = None, surf_alpha=0.7, cmap='viridis'):
-    """
-    Plot surface and overlay the path (path_points shape: (n_steps, 2)).
-    Path is plotted last with a z-offset and strong styling.
-    """
+    """Plot surface and overlay the path (path_points shape: (n_steps, 2))."""
     # Surface
     ax.plot_surface(X, Y, Z, linewidth=0, antialiased=True, alpha=surf_alpha, cmap=cmap, rstride=3, cstride=3)
 
@@ -119,10 +112,7 @@ def plot_surface_and_path(ax, X, Y, Z, path_points: np.ndarray = None, surf_alph
             "best", color='black', zorder=40)
 
 def _interp_z(X, Y, Z, xq, yq):
-    """
-    Simple bilinear interpolation on grid to get z(xq,yq).
-    Assumes X and Y are regular meshgrids from np.linspace.
-    """
+    """Simple bilinear interpolation on grid to get z(xq,yq)."""
     # locate nearest indices
     xi = np.searchsorted(X[0, :], xq) - 1
     yi = np.searchsorted(Y[:, 0], yq) - 1
@@ -150,12 +140,8 @@ def plot_convergence(ax, best_f_history):
     ax.set_ylabel('Best f (log scale)')
     ax.grid(True)
 
-def plot_neighbors_on_surface(ax, X, Y, Z, neighbors: np.ndarray,
-                              marker='.', markersize=5, alpha=0.6, color='black'):
-    """
-    Plot neighbors (shape (n,d)) as small scatter points slightly above the surface.
-    This centers the marker z-values using bilinear interpolation of Z at (x,y) and adds offset.
-    """
+def plot_neighbors_on_surface(ax, X, Y, Z, neighbors: np.ndarray, marker='.', markersize=5, alpha=0.6, color='black'):
+    """Plot neighbors (shape (n,d)) as small scatter points slightly above the surface, centers the marker z-values using bilinear interpolation of Z at (x,y) and adds offset."""
     if neighbors is None or neighbors.size == 0:
         return
 
@@ -171,5 +157,4 @@ def plot_neighbors_on_surface(ax, X, Y, Z, neighbors: np.ndarray,
     zs_offset = zs + offset
 
     # plot
-    ax.scatter(neighbors[:, 0], neighbors[:, 1], zs_offset,
-               s=markersize, marker=marker, alpha=alpha, color=color, zorder=15)
+    ax.scatter(neighbors[:, 0], neighbors[:, 1], zs_offset, s=markersize, marker=marker, alpha=alpha, color=color, zorder=15)
