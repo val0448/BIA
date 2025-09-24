@@ -3,7 +3,7 @@ from typing import Callable, Tuple, Optional
 
 class BlindSearch:
     """
-    Simple blind random search.
+    Blind random search.
 
     - func: objective (accepts (d,) or (n,d))
     - bounds: (lb, ub) arrays
@@ -13,41 +13,58 @@ class BlindSearch:
     """
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray],
                  NP=50, g_max=100, seed: Optional[int]=None):
+        # store objective and bounds as numpy arrays for vectorized operations
         self.func = func
         self.lb = np.asarray(bounds[0])
         self.ub = np.asarray(bounds[1])
+        # ensure lower/upper bounds have same shape
         assert self.lb.shape == self.ub.shape
+        # dimensionality inferred from bounds
         self.d = self.lb.size
+        # number of samples per generation, and maximum generations
         self.NP = int(NP)
         self.g_max = int(g_max)
+        # initialize numpy random generator with provided seed for reproducibility
         self.rng = np.random.default_rng(seed)
 
     def random_solution(self, n=1):
+        # draw n uniform samples in the box [lb, ub], shape (n, d)
         return self.rng.uniform(self.lb, self.ub, size=(n, self.d))
 
     def run(self, record_history=True):
+        # initialize with a single random baseline solution
         x_b = self.random_solution(1)[0]
+        # evaluate baseline objective
         f_b = float(self.func(x_b))
+        # prepare history structure if requested
         history = {"best_x": [x_b.copy()], "best_f": [f_b], "sampled": []}
 
+        # main loop: independent random sampling each generation
         for g in range(1, self.g_max + 1):
+            # sample NP candidate solutions uniformly in bounds
             samples = self.random_solution(self.NP)
+            # evaluate all samples; func may accept (n,d) to return vectorized values
             vals = np.asarray(self.func(samples))
+            # pick index of best (minimum) evaluated value
             idx = np.argmin(vals)
             x_s = samples[idx].copy()
             f_s = float(vals[idx])
 
+            # optionally record the raw samples of this generation
             if record_history:
                 history["sampled"].append(samples.copy())
 
+            # greedy acceptance: if a sampled solution is better, update baseline
             if f_s < f_b:
                 x_b = x_s.copy()
                 f_b = f_s
 
+            # record best-so-far after this generation
             if record_history:
                 history["best_x"].append(x_b.copy())
                 history["best_f"].append(f_b)
 
+        # return best solution and optional history
         if record_history:
             return x_b, f_b, history
         return x_b, f_b
@@ -75,24 +92,32 @@ class HillClimbing:
     """
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray],
                  NP: int = 50, sigma: float = 0.1, g_max: int = 100, seed: Optional[int] = None):
+        # store objective and bounds as float arrays
         self.func = func
         self.lb = np.asarray(bounds[0], dtype=float)
         self.ub = np.asarray(bounds[1], dtype=float)
+        # sanity check on bounds shapes
         assert self.lb.shape == self.ub.shape, "Bounds must match in shape"
+        # dimensionality of problem
         self.d = self.lb.size
+        # number of neighbors per generation
         assert int(NP) > 0, "NP must be positive integer"
         self.NP = int(NP)
         self.g_max = int(g_max)
-        # Accept scalar or vector sigma
+        # accept scalar or per-dimension sigma and normalize to length-d array
         self.sigma = np.asarray(sigma, dtype=float)
         if self.sigma.size == 1:
+            # broadcast scalar sigma to all dimensions
             self.sigma = np.full(self.d, float(sigma))
+        # ensure sigma shape matches dimension and values are non-negative
         assert self.sigma.shape[0] == self.d, "sigma must be scalar or of shape (d,)"
         assert np.all(self.sigma >= 0), "sigma must be non-negative"
+        # RNG for reproducible neighbor draws
         self.rng = np.random.default_rng(seed)
 
     def random_solution(self, n=1):
         """Uniform random solution(s) in bounds. Returns (n,d)."""
+        # draw n uniform samples in the bounds box
         return self.rng.uniform(self.lb, self.ub, size=(n, self.d))
 
     def _sample_neighbors(self, center: np.ndarray):
@@ -100,10 +125,11 @@ class HillClimbing:
         Sample NP neighbors from multivariate normal N(center, diag(sigma^2)).
         Clip to bounds and return shape (NP, d).
         """
-        # Draw from standard normal (NP, d) and scale by sigma
+        # draw standard normal variates (NP, d)
         z = self.rng.standard_normal(size=(self.NP, self.d))
+        # scale by sigma and shift to be centered at `center`
         samples = center.reshape(1, -1) + z * self.sigma.reshape(1, -1)
-        # Clip to bounds
+        # clip samples to respect bounds (in-place)
         np.clip(samples, self.lb, self.ub, out=samples)
         return samples
 
@@ -115,31 +141,39 @@ class HillClimbing:
           - best_f: list of best-so-far objective values (length g_max+1)
           - sampled: list of arrays (NP,d) for each generation (length g_max)
         """
-        # initialize baseline
+        # initialize baseline solution uniformly at random
         x_b = self.random_solution(1)[0]
+        # evaluate baseline
         f_b = float(self.func(x_b))
+        # prepare history container
         history = {"best_x": [x_b.copy()], "best_f": [f_b], "sampled": []}
 
+        # iterate generations, sampling neighbors around current best
         for g in range(1, self.g_max + 1):
-            # sample neighbors around current best
+            # generate NP Gaussian neighbors centered at current best
             samples = self._sample_neighbors(x_b)
+            # evaluate neighbors (vectorized if func supports it)
             vals = np.asarray(self.func(samples))
+            # pick best neighbor index
             idx = np.argmin(vals)
             x_s = samples[idx].copy()
             f_s = float(vals[idx])
 
+            # record sampled neighbors if requested
             if record_history:
                 history["sampled"].append(samples.copy())
 
-            # acceptance: greedy minimization
+            # greedy acceptance: replace baseline with better neighbor
             if f_s < f_b:
                 x_b = x_s.copy()
                 f_b = f_s
 
+            # append best-so-far after this generation
             if record_history:
                 history["best_x"].append(x_b.copy())
                 history["best_f"].append(f_b)
 
+        # return best solution and optional history
         if record_history:
             return x_b, f_b, history
         return x_b, f_b
