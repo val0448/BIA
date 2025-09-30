@@ -100,10 +100,10 @@ registry = {
     "Sphere": Function("Sphere", sphere, _make_bounds(2, -5.12, 5.12), global_minimum=np.zeros(2), global_minimum_value=0.0),
     "Ackley": Function("Ackley", ackley, _make_bounds(2, -32.768, 32.768), global_minimum=np.zeros(2), global_minimum_value=0.0),
     "Rastrigin": Function("Rastrigin", rastrigin, _make_bounds(2, -5.12, 5.12), global_minimum=np.zeros(2), global_minimum_value=0.0),
-    "Rosenbrock": Function("Rosenbrock", rosenbrock, _make_bounds(2, -5.0, 10.0), global_minimum=np.ones(2), global_minimum_value=0.0),
-    "Griewank": Function("Griewank", griewank, _make_bounds(2, -600.0, 600.0), global_minimum=np.zeros(2), global_minimum_value=0.0),
+    "Rosenbrock": Function("Rosenbrock", rosenbrock, _make_bounds(2, -10.0, 10.0), global_minimum=np.ones(2), global_minimum_value=0.0),
+    "Griewank": Function("Griewank", griewank, _make_bounds(2, -5.0, 5.0), global_minimum=np.zeros(2), global_minimum_value=0.0),
     "Schwefel": Function("Schwefel", schwefel, _make_bounds(2, -500.0, 500.0), global_minimum=np.full(2, 418.9829), global_minimum_value=0.0),
     "Levy": Function("Levy", levy, _make_bounds(2, -10.0, 10.0), global_minimum=np.ones(2), global_minimum_value=0.0),
     "Michalewicz": Function("Michalewicz", michalewicz, _make_bounds(2, 0.0, np.pi)),
-    "Zakharov": Function("Zakharov", zakharov, _make_bounds(2, -5.0, 10.0), global_minimum=np.zeros(2), global_minimum_value=0.0),
+    "Zakharov": Function("Zakharov", zakharov, _make_bounds(2, -10.0, 10.0), global_minimum=np.zeros(2), global_minimum_value=0.0),
 }

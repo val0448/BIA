@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib import animation
 from functions import registry
+from typing import Callable, Sequence
+from IPython.display import display
 
 def surface_grid(function, lb: np.ndarray, ub: np.ndarray, grid_points: int=120):
     """Generate a grid for surface/contour plots of a 2D function."""
@@ -114,12 +117,12 @@ def plot_surface_and_path(ax, X, Y, Z, path_points: np.ndarray = None, surf_alph
     z_offset = 0.01 * (zrange if zrange != 0 else 1.0)
     zs_offset = zs + z_offset
 
-    # plot the trajectory with strong styling for visibility
+    # plot the trajectory
     ax.plot(path_points[:, 0], path_points[:, 1], zs_offset,
             linewidth=3.5, marker='o', markersize=7, label='best-so-far',
             zorder=20, color='red')
 
-    # highlight the final (best) point
+    # highlight the final point
     ax.scatter([path_points[-1, 0]], [path_points[-1, 1]], [zs_offset[-1]],
                s=200, marker='X', edgecolor='black', linewidth=1.5, zorder=30, c='gold')
 
@@ -179,3 +182,81 @@ def plot_neighbors_on_surface(ax, X, Y, Z, neighbors: np.ndarray, marker='.', ma
 
     # draw neighbor points as small markers with given styling
     ax.scatter(neighbors[:, 0], neighbors[:, 1], zs_offset, s=markersize, marker=marker, alpha=alpha, color=color, zorder=15)
+
+def animate_best_path_on_heatmap(func: Callable[[np.ndarray], np.ndarray],
+                                 lb: np.ndarray,
+                                 ub: np.ndarray,
+                                 best_x_history: Sequence[np.ndarray],
+                                 grid: int = 200,
+                                 interval: int = 200,
+                                 save_path: str = "best_path_animation.gif",
+                                 show_final_point: bool = True):
+    lb = np.asarray(lb, dtype=float)
+    ub = np.asarray(ub, dtype=float)
+    hist = np.asarray(best_x_history)
+    if lb.size != 2 or ub.size != 2:
+        raise ValueError("lb and ub must be length-2 arrays for 2D heatmap.")
+    if hist.ndim != 2 or hist.shape[1] != 2:
+        raise ValueError("best_x_history must be sequence of 2D points with shape (n_steps, 2).")
+
+    xs = np.linspace(lb[0], ub[0], grid)
+    ys = np.linspace(lb[1], ub[1], grid)
+    X, Y = np.meshgrid(xs, ys)
+    pts = np.stack([X.ravel(), Y.ravel()], axis=1)
+    try:
+        Z = np.asarray(func(pts)).reshape(X.shape)
+    except Exception:
+        Z = np.array([float(func(p)) for p in pts]).reshape(X.shape)
+
+    fig, ax = plt.subplots(figsize=(7,6))
+    mesh = ax.pcolormesh(X, Y, Z, shading='auto')
+    fig.colorbar(mesh, ax=ax, label='f(x)')
+
+    line, = ax.plot([], [], lw=2.5, marker='o', markersize=6, label='best path', color='red')
+    current_point, = ax.plot([], [], marker='o', markersize=8, color='red')
+    final_point = None
+    if show_final_point:
+        # initialize with empty 0x2 array
+        final_point = ax.scatter([], [], s=200, marker='X', c='gold', edgecolors='black', zorder=20)
+
+    ax.set_xlim(lb[0], ub[0])
+    ax.set_ylim(lb[1], ub[1])
+    ax.set_xlabel('x1'); ax.set_ylabel('x2')
+    ax.set_title('Best-so-far path over iterations (heatmap)')
+    start = hist[0]
+    ax.scatter([start[0]], [start[1]], c='white', edgecolors='black', s=80, zorder=20, label='start')
+    ax.legend(loc='upper right')
+
+    n_frames = hist.shape[0]
+
+    def init():
+        line.set_data([], [])
+        current_point.set_data([], [])
+        if final_point is not None:
+            final_point.set_offsets(np.empty((0,2)))
+        return (line, current_point) + ((final_point,) if final_point is not None else ())
+
+    def update(i):
+        ptsx = hist[:i+1, 0]
+        ptsy = hist[:i+1, 1]
+        line.set_data(ptsx, ptsy)
+        current_point.set_data(ptsx[-1:], ptsy[-1:])
+        if final_point is not None:
+            final_point.set_offsets([hist[-1]] if i == n_frames-1 else np.empty((0,2)))
+        return (line, current_point) + ((final_point,) if final_point is not None else ())
+
+    anim = animation.FuncAnimation(fig, update, init_func=init, frames=n_frames, interval=interval, blit=True)
+
+    try:
+        anim.save(save_path, writer='pillow', fps=max(1, 1000//interval))
+        plt.close(fig)
+        print(f"Animation saved to: {save_path}")
+    except Exception as e:
+        print("Saving animation failed:", e)
+        try:
+            from IPython.display import HTML
+            display(HTML(anim.to_jshtml()))
+        except Exception as e2:
+            print("Also failed to display inline:", e2)
+
+    return save_path

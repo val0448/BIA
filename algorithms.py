@@ -17,8 +17,6 @@ class BlindSearch:
         self.func = func
         self.lb = np.asarray(bounds[0])
         self.ub = np.asarray(bounds[1])
-        # ensure lower/upper bounds have same shape
-        assert self.lb.shape == self.ub.shape
         # dimensionality inferred from bounds
         self.d = self.lb.size
         # number of samples per generation, and maximum generations
@@ -50,11 +48,11 @@ class BlindSearch:
             x_s = samples[idx].copy()
             f_s = float(vals[idx])
 
-            # optionally record the raw samples of this generation
+            # record the raw samples of this generation
             if record_history:
                 history["sampled"].append(samples.copy())
 
-            # greedy acceptance: if a sampled solution is better, update baseline
+            # if a sampled solution is better, update baseline
             if f_s < f_b:
                 x_b = x_s.copy()
                 f_b = f_s
@@ -72,16 +70,6 @@ class BlindSearch:
 class HillClimbing:
     """
     Hill Climbing algorithm (minimization) using multiple normal neighbors per generation.
-
-    Flowchart / behavior:
-      - Start: sample baseline x_b uniformly in bounds.
-      - For g = 1..g_max:
-          - Generate NP neighbors ~ N(mean = x_b, cov = sigma^2 * I)
-          - Clip neighbors to bounds
-          - Evaluate neighbors and pick best x_s
-          - If f(x_s) < f(x_b): x_b = x_s
-      - Return x_b (best found)
-
     Parameters:
       - func: objective (accepts (d,) or (n,d))
       - bounds: (lb, ub) arrays
@@ -96,8 +84,6 @@ class HillClimbing:
         self.func = func
         self.lb = np.asarray(bounds[0], dtype=float)
         self.ub = np.asarray(bounds[1], dtype=float)
-        # sanity check on bounds shapes
-        assert self.lb.shape == self.ub.shape, "Bounds must match in shape"
         # dimensionality of problem
         self.d = self.lb.size
         # number of neighbors per generation
@@ -109,14 +95,11 @@ class HillClimbing:
         if self.sigma.size == 1:
             # broadcast scalar sigma to all dimensions
             self.sigma = np.full(self.d, float(sigma))
-        # ensure sigma shape matches dimension and values are non-negative
-        assert self.sigma.shape[0] == self.d, "sigma must be scalar or of shape (d,)"
-        assert np.all(self.sigma >= 0), "sigma must be non-negative"
         # RNG for reproducible neighbor draws
         self.rng = np.random.default_rng(seed)
 
     def random_solution(self, n=1):
-        """Uniform random solution(s) in bounds. Returns (n,d)."""
+        """Random solution in bounds. Returns (n,d)."""
         # draw n uniform samples in the bounds box
         return self.rng.uniform(self.lb, self.ub, size=(n, self.d))
 
@@ -163,7 +146,7 @@ class HillClimbing:
             if record_history:
                 history["sampled"].append(samples.copy())
 
-            # greedy acceptance: replace baseline with better neighbor
+            # replace baseline with better neighbor
             if f_s < f_b:
                 x_b = x_s.copy()
                 f_b = f_s
@@ -177,3 +160,98 @@ class HillClimbing:
         if record_history:
             return x_b, f_b, history
         return x_b, f_b
+    
+# --- SimulatedAnnealing class (copy into bio_opt/algorithms.py) ---
+
+import numpy as np
+from typing import Callable, Tuple, Optional
+
+class SimulatedAnnealing:
+    """Simulated Annealing for minimization."""
+
+    def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray], T0: float = 100.0,
+                 Tmin: float = 0.5, alpha: float = 0.95, sigma: float = 0.1, max_iters: int = 100000, seed: Optional[int] = None):
+        self.func = func
+        self.lb = np.asarray(bounds[0], dtype=float)
+        self.ub = np.asarray(bounds[1], dtype=float)
+        self.d = self.lb.size
+        self.T0 = float(T0)
+        self.Tmin = float(Tmin)
+        self.alpha = float(alpha)
+
+        self.sigma = np.asarray(sigma, dtype=float)
+        if self.sigma.size == 1:
+            self.sigma = np.full(self.d, float(sigma))
+
+        self.max_iters = int(max_iters)
+        self.rng = np.random.default_rng(seed)
+
+    def random_solution(self, n=1):
+        """Uniform random solution(s) in bounds: returns array shape (n,d)."""
+        return self.rng.uniform(self.lb, self.ub, size=(n, self.d))
+
+    def _neighbor(self, x: np.ndarray) -> np.ndarray:
+        """Generate a single neighbor around x using Normal(center=x, sigma^2 I) and clip to bounds."""
+        z = self.rng.standard_normal(size=(self.d,))
+        x1 = x + z * self.sigma
+        # Clip to bounds
+        np.clip(x1, self.lb, self.ub, out=x1)
+        return x1
+
+    def run(self, record_history: bool = True):
+        """Execute Simulated Annealing."""
+        T = self.T0
+
+        # initial solution
+        x = self.random_solution(1)[0]
+        f_x = float(self.func(x))
+
+        # best-ever
+        x_best = x.copy()
+        f_best = f_x
+
+        history = {"x": [x.copy()], "f": [f_x], "best_x": [x_best.copy()], "best_f": [f_best], "accepted": []} if record_history else None
+ 
+        iters = 0
+        # follow pseudocode: while T > Tmin
+        while T > self.Tmin and iters < self.max_iters:
+            x1 = self._neighbor(x)
+            f_x1 = float(self.func(x1))
+
+            accepted = False
+            if f_x1 < f_x:
+                # better -> accept
+                x = x1
+                f_x = f_x1
+                accepted = True
+            else:
+                # worse -> accept with prob exp(-(f_x1 - f_x)/T)
+                delta = f_x1 - f_x  # >= 0
+                # if T==0 then prob=0 (can't accept worse)
+                prob = np.exp(-delta / T) if T > 0 else 0.0
+                r = self.rng.random()
+                if r < prob:
+                    x = x1
+                    f_x = f_x1
+                    accepted = True
+
+            # update best-ever if improved
+            if f_x < f_best:
+                f_best = f_x
+                x_best = x.copy()
+
+            # record iteration
+            if record_history:
+                history["x"].append(x.copy())
+                history["f"].append(f_x)
+                history["best_x"].append(x_best.copy())
+                history["best_f"].append(f_best)
+                history["accepted"].append(bool(accepted))
+
+            # cool down
+            T = T * self.alpha
+            iters += 1
+
+        if record_history:
+            return x_best, f_best, history
+        return x_best, f_best
