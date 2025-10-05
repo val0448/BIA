@@ -3,7 +3,10 @@ import matplotlib.pyplot as plt
 from matplotlib import animation
 from functions import registry
 from typing import Callable, Sequence
-from IPython.display import display
+from IPython.display import HTML, display
+import ipywidgets as widgets
+from PIL import Image
+import io
 
 def surface_grid(function, lb: np.ndarray, ub: np.ndarray, grid_points: int=120):
     """Generate a grid for surface/contour plots of a 2D function."""
@@ -156,7 +159,7 @@ def _interp_z(X, Y, Z, xq, yq):
             Q12 * (1-wx2) * wy2 + Q22 * wx2 * wy2)
 
 def plot_convergence(ax, best_f_history):
-    # plot best-so-far objective history on a log y-scale for convergence behavior
+    """Plot best function value history on log scale."""
     ax.plot(best_f_history, linewidth=2.0, color='tab:orange')
     ax.set_yscale('log')
     ax.set_xlabel('Generation')
@@ -183,22 +186,14 @@ def plot_neighbors_on_surface(ax, X, Y, Z, neighbors: np.ndarray, marker='.', ma
     # draw neighbor points as small markers with given styling
     ax.scatter(neighbors[:, 0], neighbors[:, 1], zs_offset, s=markersize, marker=marker, alpha=alpha, color=color, zorder=15)
 
-def animate_best_path_on_heatmap(func: Callable[[np.ndarray], np.ndarray],
-                                 lb: np.ndarray,
-                                 ub: np.ndarray,
-                                 best_x_history: Sequence[np.ndarray],
-                                 grid: int = 200,
-                                 interval: int = 200,
-                                 save_path: str = "best_path_animation.gif",
-                                 show_final_point: bool = True):
+def animate_best_path_on_heatmap(func: Callable[[np.ndarray], np.ndarray], lb: np.ndarray, ub: np.ndarray, best_x_history: Sequence[np.ndarray],
+                                 grid: int = 200, interval: int = 200, save_path: str = "best_path_animation.gif", show_final_point: bool = True):
+    """Animate the best-so-far path over iterations on a heatmap of the function."""
     lb = np.asarray(lb, dtype=float)
     ub = np.asarray(ub, dtype=float)
     hist = np.asarray(best_x_history)
-    if lb.size != 2 or ub.size != 2:
-        raise ValueError("lb and ub must be length-2 arrays for 2D heatmap.")
-    if hist.ndim != 2 or hist.shape[1] != 2:
-        raise ValueError("best_x_history must be sequence of 2D points with shape (n_steps, 2).")
 
+    # create grid for heatmap
     xs = np.linspace(lb[0], ub[0], grid)
     ys = np.linspace(lb[1], ub[1], grid)
     X, Y = np.meshgrid(xs, ys)
@@ -254,9 +249,76 @@ def animate_best_path_on_heatmap(func: Callable[[np.ndarray], np.ndarray],
     except Exception as e:
         print("Saving animation failed:", e)
         try:
-            from IPython.display import HTML
             display(HTML(anim.to_jshtml()))
         except Exception as e2:
             print("Also failed to display inline:", e2)
 
     return save_path
+
+def animate_tsp_history_cities(cities, best_tours, save_path="tsp_ga_cities_demo.gif", interval=200):
+    """Animate the best tour over generations on a 2D scatter plot of cities."""
+    coords = cities.coords_array()
+    hist = np.asarray(best_tours, dtype=int); n_frames = hist.shape[0]
+    lines_x = []; lines_y = []
+    for tour in hist:
+        tour = np.asarray(tour, dtype=int); tour_cycle = np.concatenate([tour, tour[:1]])
+        lines_x.append(coords[tour_cycle,0]); lines_y.append(coords[tour_cycle,1])
+    fig, ax = plt.subplots(figsize=(7,7))
+    ax.scatter(coords[:,0], coords[:,1], s=60, c='blue', zorder=5)
+    for i, name in enumerate(cities.names):
+        x,y = coords[i]; ax.text(x,y,name,fontsize=9,verticalalignment='bottom', horizontalalignment='right')
+    lineplot, = ax.plot([], [], '-o', color='red', linewidth=2, markersize=6, zorder=10)
+    title = ax.text(0.5,1.03,"", transform=ax.transAxes, ha='center')
+    xmin,xmax = coords[:,0].min(), coords[:,0].max(); ymin,ymax = coords[:,1].min(), coords[:,1].max()
+    dx = xmax-xmin; dy = ymax-ymin; padding=0.05
+    ax.set_xlim(xmin-padding*dx, xmax+padding*dx); ax.set_ylim(ymin-padding*dy, ymax+padding*dy)
+    def init():
+        lineplot.set_data([],[]); title.set_text(""); return lineplot, title
+    def update(i):
+        lineplot.set_data(lines_x[i], lines_y[i])
+        xs = lines_x[i]; ys = lines_y[i]; total_len = np.sqrt(np.diff(xs)**2 + np.diff(ys)**2).sum()
+        title.set_text(f"Generation {i} / Best length: {total_len:.3f}"); return lineplot, title
+    anim = animation.FuncAnimation(fig, update, init_func=init, frames=n_frames, interval=interval, blit=True)
+    try:
+        anim.save(save_path, writer='pillow', fps=max(1,1000//interval)); plt.close(fig); print("Saved:", save_path)
+    except Exception as e:
+        print("Save failed:", e)
+        try:
+            display(HTML(anim.to_jshtml()))
+        except Exception as e2:
+            print("Also failed to display inline:", e2)
+    return save_path
+
+def gif_frames_from_file(gif_path):
+    """Return list of bytes objects for each GIF frame (each in PNG bytes form for ipywidgets.Image)."""
+    pil_gif = Image.open(gif_path)
+    frames = []
+    try:
+        i = 0
+        while True:
+            pil_gif.seek(i)
+            frame = pil_gif.convert("RGBA")   # convert to RGBA for consistent display
+            buf = io.BytesIO()
+            frame.save(buf, format="PNG")
+            frames.append(buf.getvalue())
+            i += 1
+    except EOFError:
+        pass
+    return frames
+
+def display_gif_frame_by_frame(gif_path, width=600):
+    """Display an interactive widget to step through GIF frames manually."""
+    frames = gif_frames_from_file(gif_path)
+    if len(frames) == 0:
+        raise RuntimeError("No frames found in GIF")
+
+    img_widget = widgets.Image(value=frames[0], format='png', width=width)
+    slider = widgets.IntSlider(value=0, min=0, max=len(frames)-1, step=1, description='frame')
+
+    def on_slide(change):
+        img_widget.value = frames[change['new']]
+
+    slider.observe(on_slide, names='value')
+
+    controls = widgets.HBox([slider])
+    display(widgets.VBox([img_widget, controls])) 

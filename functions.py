@@ -1,6 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
-from typing import Callable, Tuple, Optional
+from typing import Callable, Tuple, Optional, Sequence
 
 @dataclass
 class Function:
@@ -94,6 +94,7 @@ def zakharov(x: np.ndarray):
 
 # --- registry ---
 def _make_bounds(d, lower, upper):
+    """Create bounds arrays of shape (d,) filled with lower and upper values."""
     return np.full(d, lower), np.full(d, upper)
 
 registry = {
@@ -107,3 +108,60 @@ registry = {
     "Michalewicz": Function("Michalewicz", michalewicz, _make_bounds(2, 0.0, np.pi)),
     "Zakharov": Function("Zakharov", zakharov, _make_bounds(2, -10.0, 10.0), global_minimum=np.zeros(2), global_minimum_value=0.0),
 }
+
+class Cities:
+    """Class representing a set of cities for the Traveling Salesman Problem (TSP)."""
+    def __init__(self, n: int = None, seed: Optional[int] = None, grid_size: float = 1000.0, coords: Optional[np.ndarray] = None, names: Optional[Sequence[str]] = None):
+        """Initialize Cities either with random coordinates or provided coordinates and names."""
+        if coords is None and n is None:
+            raise ValueError("Either coords or n must be provided")
+        self.seed = seed
+        self.grid_size = float(grid_size)
+        if coords is not None:
+            self.coords = np.asarray(coords, dtype=float)
+            self.n = self.coords.shape[0]
+        else:
+            self.n = int(n)
+            rng = np.random.default_rng(self.seed)
+            self.coords = rng.uniform(0.0, self.grid_size, size=(self.n, 2))
+        if names is not None:
+            if len(names) != self.n:
+                raise ValueError("Length of names must equal number of cities")
+            self.names = list(names)
+        else:
+            self.names = []
+            i = 0
+            while len(self.names) < self.n:
+                s = ""
+                x = i
+                while True:
+                    s = chr(65 + (x % 26)) + s
+                    x = x // 26 - 1
+                    if x < 0:
+                        break
+                self.names.append(s)
+                i += 1
+        self.coord_dict = {name: (float(x), float(y)) for name, (x, y) in zip(self.names, self.coords)}
+        self._dist_matrix = None
+    def coords_array(self):
+        """Return a copy of the city coordinates."""
+        return self.coords.copy()
+    def distance_matrix(self):
+        """Compute and return the distance matrix between cities."""
+        if self._dist_matrix is None:
+            diff = self.coords[:, None, :] - self.coords[None, :, :]
+            self._dist_matrix = np.sqrt(np.sum(diff**2, axis=2))
+        return self._dist_matrix
+    def distance(self, a, b):
+        """Compute the distance between two cities."""
+        # accept names or indices
+        a = self.names.index(a) if isinstance(a, str) else a
+        b = self.names.index(b) if isinstance(b, str) else b
+        D = self.distance_matrix()
+        return float(D[a, b])
+    def total_distance(self, tour):
+        """Compute the total distance of a tour."""
+        # tour can be list of names or indices
+        idx = tour if isinstance(tour, np.ndarray) else [self.names.index(t) for t in tour]
+        D = self.distance_matrix()
+        return float(np.sum(D[idx, np.roll(idx, -1)]))

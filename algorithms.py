@@ -1,40 +1,29 @@
 import numpy as np
 from typing import Callable, Tuple, Optional
+from functions import Cities
 
 class BlindSearch:
-    """
-    Blind random search.
-
-    - func: objective (accepts (d,) or (n,d))
-    - bounds: (lb, ub) arrays
-    - NP: samples per generation
-    - g_max: number of generations
-    - seed: RNG seed
-    """
+    """Blind random search."""
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray],
                  NP=50, g_max=100, seed: Optional[int]=None):
-        # store objective and bounds as numpy arrays for vectorized operations
-        self.func = func
+        """Initialize Blind Search optimizer."""
+        self.func = func # objective function
         self.lb = np.asarray(bounds[0])
         self.ub = np.asarray(bounds[1])
-        # dimensionality inferred from bounds
-        self.d = self.lb.size
-        # number of samples per generation, and maximum generations
-        self.NP = int(NP)
-        self.g_max = int(g_max)
-        # initialize numpy random generator with provided seed for reproducibility
-        self.rng = np.random.default_rng(seed)
+        self.d = self.lb.size # dimensionality inferred from bounds
+        self.NP = int(NP) # number of samples per generation
+        self.g_max = int(g_max) # maximum generations
+        self.rng = np.random.default_rng(seed) # RNG for reproducible sampling
 
     def random_solution(self, n=1):
-        # draw n uniform samples in the box [lb, ub], shape (n, d)
+        """Generate n random solutions uniformly in bounds."""
         return self.rng.uniform(self.lb, self.ub, size=(n, self.d))
 
     def run(self, record_history=True):
+        """Execute Blind Search and return best_x, best_f, history (if requested)."""
         # initialize with a single random baseline solution
         x_b = self.random_solution(1)[0]
-        # evaluate baseline objective
         f_b = float(self.func(x_b))
-        # prepare history structure if requested
         history = {"best_x": [x_b.copy()], "best_f": [f_b], "sampled": []}
 
         # main loop: independent random sampling each generation
@@ -68,46 +57,28 @@ class BlindSearch:
         return x_b, f_b
     
 class HillClimbing:
-    """
-    Hill Climbing algorithm (minimization) using multiple normal neighbors per generation.
-    Parameters:
-      - func: objective (accepts (d,) or (n,d))
-      - bounds: (lb, ub) arrays
-      - NP: neighbors per generation (must be >=1)
-      - sigma: standard deviation for normal neighbor generation (scalar or array-like length d)
-      - g_max: number generations
-      - seed: RNG seed (int or None)
-    """
+    """Hill Climbing algorithm (minimization) using multiple normal neighbors per generation."""
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray],
                  NP: int = 50, sigma: float = 0.1, g_max: int = 100, seed: Optional[int] = None):
-        # store objective and bounds as float arrays
-        self.func = func
+        """Initialize Hill Climbing optimizer."""
+        self.func = func # objective function
         self.lb = np.asarray(bounds[0], dtype=float)
         self.ub = np.asarray(bounds[1], dtype=float)
-        # dimensionality of problem
-        self.d = self.lb.size
-        # number of neighbors per generation
-        assert int(NP) > 0, "NP must be positive integer"
-        self.NP = int(NP)
-        self.g_max = int(g_max)
-        # accept scalar or per-dimension sigma and normalize to length-d array
-        self.sigma = np.asarray(sigma, dtype=float)
+        self.d = self.lb.size # dimensionality of problem
+        self.NP = int(NP) # number of neighbors per generation
+        self.g_max = int(g_max) # maximum generations
+        self.sigma = np.asarray(sigma, dtype=float) # accept scalar or per-dimension sigma and normalize to length-d array
         if self.sigma.size == 1:
-            # broadcast scalar sigma to all dimensions
-            self.sigma = np.full(self.d, float(sigma))
-        # RNG for reproducible neighbor draws
-        self.rng = np.random.default_rng(seed)
+            self.sigma = np.full(self.d, float(sigma)) # broadcast scalar sigma to all dimensions
+        self.rng = np.random.default_rng(seed) # RNG for reproducible neighbor draws
 
     def random_solution(self, n=1):
-        """Random solution in bounds. Returns (n,d)."""
+        """Random solution in bounds"""
         # draw n uniform samples in the bounds box
         return self.rng.uniform(self.lb, self.ub, size=(n, self.d))
 
     def _sample_neighbors(self, center: np.ndarray):
-        """
-        Sample NP neighbors from multivariate normal N(center, diag(sigma^2)).
-        Clip to bounds and return shape (NP, d).
-        """
+        """Sample NP neighbors from multivariate normal N(center, diag(sigma^2)) within bounds."""
         # draw standard normal variates (NP, d)
         z = self.rng.standard_normal(size=(self.NP, self.d))
         # scale by sigma and shift to be centered at `center`
@@ -117,13 +88,7 @@ class HillClimbing:
         return samples
 
     def run(self, record_history=True):
-        """
-        Execute Hill Climbing and return best_x, best_f, history (if requested).
-        history fields:
-          - best_x: list of best-so-far vectors (length g_max+1)
-          - best_f: list of best-so-far objective values (length g_max+1)
-          - sampled: list of arrays (NP,d) for each generation (length g_max)
-        """
+        """Execute Hill Climbing and return best_x, best_f, history (if requested)."""
         # initialize baseline solution uniformly at random
         x_b = self.random_solution(1)[0]
         # evaluate baseline
@@ -160,17 +125,12 @@ class HillClimbing:
         if record_history:
             return x_b, f_b, history
         return x_b, f_b
-    
-# --- SimulatedAnnealing class (copy into bio_opt/algorithms.py) ---
-
-import numpy as np
-from typing import Callable, Tuple, Optional
 
 class SimulatedAnnealing:
     """Simulated Annealing for minimization."""
-
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray], T0: float = 100.0,
                  Tmin: float = 0.5, alpha: float = 0.95, sigma: float = 0.1, max_iters: int = 100000, seed: Optional[int] = None):
+        """Initialize Simulated Annealing optimizer."""
         self.func = func
         self.lb = np.asarray(bounds[0], dtype=float)
         self.ub = np.asarray(bounds[1], dtype=float)
@@ -200,13 +160,10 @@ class SimulatedAnnealing:
 
     def run(self, record_history: bool = True):
         """Execute Simulated Annealing."""
-        T = self.T0
-
         # initial solution
+        T = self.T0
         x = self.random_solution(1)[0]
         f_x = float(self.func(x))
-
-        # best-ever
         x_best = x.copy()
         f_best = f_x
 
@@ -226,8 +183,8 @@ class SimulatedAnnealing:
                 accepted = True
             else:
                 # worse -> accept with prob exp(-(f_x1 - f_x)/T)
-                delta = f_x1 - f_x  # >= 0
-                # if T==0 then prob=0 (can't accept worse)
+                delta = f_x1 - f_x
+                # if T==0 then prob=0
                 prob = np.exp(-delta / T) if T > 0 else 0.0
                 r = self.rng.random()
                 if r < prob:
@@ -255,3 +212,115 @@ class SimulatedAnnealing:
         if record_history:
             return x_best, f_best, history
         return x_best, f_best
+
+class GeneticAlgorithm:
+    """Genetic Algorithm for solving the TSP (Traveling Salesman Problem) using permutation encoding."""
+    def __init__(self, cities: Cities, NP: int = 50, G: int = 200, mutation_prob: float = 0.5, max_mutation_strength: float = 0.1, seed: Optional[int] = None):
+        """Initialize Genetic Algorithm for TSP."""
+        self.cities = cities # Cities instance with coordinates and distance methods
+        self.n_cities = cities.n # number of cities
+        cities.distance_matrix() # Precompute distance matrix for efficiency
+        self.NP = max(int(NP), 2) # population size, at least 2
+        self.G = int(G) # number of generations
+        self.mutation_prob = float(mutation_prob)
+        self.max_mutation = min(max(int(max_mutation_strength * self.n_cities), 2), self.n_cities) # Maximum number of cities to mutate in a swap
+        self.rng = np.random.default_rng(seed) # Random number generator
+
+    def _random_population(self):
+        """Generate initial population of random tours (permutations)."""
+        pop = np.empty((self.NP, self.n_cities), dtype=int)
+        for i in range(self.NP):
+            # Each individual is a random permutation of city indices
+            pop[i] = self.rng.permutation(self.n_cities)
+        return pop
+
+    def _evaluate_population(self, population):
+        """Evaluate the total tour length for each individual in the population."""
+        lengths = np.empty(population.shape[0], dtype=float)
+        for i, tour in enumerate(population):
+            lengths[i] = self.cities.total_distance(tour)
+        return lengths
+
+    def _order_crossover(self, parent_a, parent_b):
+        """Perform order crossover (OX) between two parent tours."""
+        n = self.n_cities
+        child = -np.ones(n, dtype=int)
+        # Randomly select a subsequence from parent_a
+        i, j = sorted(self.rng.choice(n, size=2, replace=False))
+        child[i:j+1] = parent_a[i:j+1]
+        # Fill remaining positions with cities from parent_b in order, skipping duplicates
+        fill_pos = (j + 1) % n
+        b_idx = (j + 1) % n
+        while np.any(child == -1):
+            city = parent_b[b_idx]
+            if city not in child:
+                child[fill_pos] = city
+                fill_pos = (fill_pos + 1) % n
+            b_idx = (b_idx + 1) % n
+        return child
+
+    def _mutate_swap(self, tour):
+        """Mutate a tour by randomly swapping a subset of cities."""
+        # Decide whether to mutate based on mutation_prob
+        if self.rng.random() >= self.mutation_prob:
+            return tour.copy()
+        # Choose number of cities to mutate: between 2 and max_mutation
+        n_mut = self.rng.integers(2, self.max_mutation + 1)
+        idx = self.rng.choice(self.n_cities, size=n_mut, replace=False)
+        # Shuffle the selected indices
+        shuffled = idx.copy()
+        self.rng.shuffle(shuffled)
+        t = tour.copy()
+        # Assign shuffled cities to the selected indices
+        t[idx] = t[shuffled]
+        return t
+
+    def run(self, record_history=True):
+        """Run the genetic algorithm for G generations."""
+        # Initialize population and evaluate
+        population = self._random_population()
+        lengths = self._evaluate_population(population)
+        best_idx = int(np.argmin(lengths)) 
+        best_tour = population[best_idx].copy()
+        best_len = float(lengths[best_idx])
+        # History records best tour and population best per generation
+        history = {"best_tour": [best_tour.copy()], "best_f": [best_len], "pop_best": [best_len]}
+        for gen in range(1, self.G+1):
+            # Copy current population and fitness
+            new_pop = population.copy()
+            new_lengths = lengths.copy()
+            for j in range(self.NP):
+                # Select parent A (current individual)
+                parent_A = population[j]
+                # Select parent B (different individual)
+                k = j
+                while k == j:
+                    k = int(self.rng.integers(0, self.NP))
+                parent_B = population[k]
+                # Generate offspring by crossover and mutation
+                offspring = self._order_crossover(parent_A, parent_B)
+                offspring = self._mutate_swap(offspring)
+                off_length = self.cities.total_distance(offspring)
+                # Replace parent if offspring is better or equal
+                if off_length <= new_lengths[j]:
+                    new_pop[j] = offspring
+                    new_lengths[j] = off_length
+            # Update population and fitness
+            population = new_pop
+            lengths = new_lengths
+            # Find best in current generation
+            gen_best_idx = int(np.argmin(lengths))
+            gen_best_len = float(lengths[gen_best_idx])
+            gen_best_tour = population[gen_best_idx].copy()
+            # Update overall best if improved
+            if gen_best_len < best_len:
+                best_len = gen_best_len
+                best_tour = gen_best_tour.copy()
+            # Record history if requested
+            if record_history:
+                history["best_tour"].append(best_tour.copy())
+                history["best_f"].append(best_len)
+                history["pop_best"].append(gen_best_len)
+        if record_history:
+            return best_tour, best_len, history
+        return best_tour, best_len
