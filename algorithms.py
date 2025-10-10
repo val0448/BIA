@@ -324,3 +324,80 @@ class GeneticAlgorithm:
         if record_history:
             return best_tour, best_len, history
         return best_tour, best_len
+
+class DifferentialEvolution:
+    """Differential Evolution (DE) for minimization."""
+    def __init__(self, func: Callable, bounds: Tuple, NP: int = 50, F: float = 0.8,
+                 CR: float = 0.9, g_max: int = 200, seed: Optional[int] = None):
+        self.func = func
+        self.lb = np.asarray(bounds[0], dtype=float)
+        self.ub = np.asarray(bounds[1], dtype=float)
+        self.d = self.lb.size
+        self.NP = max(int(NP), 4) # number of population members
+        self.F = float(F) # differential weight
+        self.CR = float(CR) # crossover probability
+        self.g_max = int(g_max) # max generations
+        self.rng = np.random.default_rng(seed)
+
+    def _rand_population(self):
+        """Initial population uniformly sampled in the box [lb, ub]."""
+        return self.rng.uniform(self.lb, self.ub, size=(self.NP, self.d))
+
+    def run(self, record_history = True):
+        """Execute DE and return best solution, value, and optional history dict."""
+        pop = self._rand_population() # initial population
+        fitness = np.asarray(self.func(pop)) # evaluate population (batch)
+        best_idx = int(np.argmin(fitness))
+        best = pop[best_idx].copy()
+        best_f = float(fitness[best_idx])
+        history = {"best_x":[best.copy()], "best_f":[best_f], "pop":[pop.copy()]} if record_history else None
+
+        # main loop
+        for g in range(1, self.g_max+1):
+            new_pop = pop.copy()
+            new_fit = fitness.copy()
+
+            for i in range(self.NP):
+                # select r1, r2, r3 distinct and not equal to current index i
+                idxs = list(range(self.NP))
+                idxs.remove(i)
+                r1, r2, r3 = self.rng.choice(idxs, size=3, replace=False)
+
+                x_r1 = pop[r1]
+                x_r2 = pop[r2]
+                x_r3 = pop[r3]
+
+                # mutation (v = x_r3 + F*(x_r1 - x_r2))
+                v = x_r3 + self.F * (x_r1 - x_r2)
+                # clip mutated vector to bounds
+                v = np.clip(v, self.lb, self.ub)
+
+                # binomial crossover
+                jrand = int(self.rng.integers(0, self.d))
+                trial = np.empty(self.d, dtype=float)
+                for j in range(self.d):
+                    if self.rng.random() < self.CR or j == jrand:
+                        trial[j] = v[j]
+                    else:
+                        trial[j] = pop[i, j]
+
+                # selection
+                f_trial = float(self.func(trial))
+                if f_trial <= fitness[i]:
+                    new_pop[i] = trial
+                    new_fit[i] = f_trial
+                    # update global best if improved
+                    if f_trial < best_f:
+                        best_f = f_trial
+                        best = trial.copy()
+
+            # replace population
+            pop = new_pop
+            fitness = new_fit
+
+            if record_history:
+                history["best_x"].append(best.copy())
+                history["best_f"].append(best_f)
+                history["pop"].append(pop.copy())
+
+        return (best, best_f, history) if record_history else (best, best_f)
