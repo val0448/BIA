@@ -6,7 +6,6 @@ class BlindSearch:
     """Blind random search."""
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray],
                  NP=50, g_max=100, seed: Optional[int]=None):
-        """Initialize Blind Search optimizer."""
         self.func = func # objective function
         self.lb = np.asarray(bounds[0])
         self.ub = np.asarray(bounds[1])
@@ -60,7 +59,6 @@ class HillClimbing:
     """Hill Climbing algorithm (minimization) using multiple normal neighbors per generation."""
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray],
                  NP: int = 50, sigma: float = 0.1, g_max: int = 100, seed: Optional[int] = None):
-        """Initialize Hill Climbing optimizer."""
         self.func = func # objective function
         self.lb = np.asarray(bounds[0], dtype=float)
         self.ub = np.asarray(bounds[1], dtype=float)
@@ -130,7 +128,6 @@ class SimulatedAnnealing:
     """Simulated Annealing for minimization."""
     def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray], T0: float = 100.0,
                  Tmin: float = 0.5, alpha: float = 0.95, sigma: float = 0.1, max_iters: int = 100000, seed: Optional[int] = None):
-        """Initialize Simulated Annealing optimizer."""
         self.func = func
         self.lb = np.asarray(bounds[0], dtype=float)
         self.ub = np.asarray(bounds[1], dtype=float)
@@ -216,7 +213,6 @@ class SimulatedAnnealing:
 class GeneticAlgorithm:
     """Genetic Algorithm for solving the TSP (Traveling Salesman Problem) using permutation encoding."""
     def __init__(self, cities: Cities, NP: int = 50, G: int = 200, mutation_prob: float = 0.5, max_mutation_strength: float = 0.1, seed: Optional[int] = None):
-        """Initialize Genetic Algorithm for TSP."""
         self.cities = cities # Cities instance with coordinates and distance methods
         self.n_cities = cities.n # number of cities
         cities.distance_matrix() # Precompute distance matrix for efficiency
@@ -356,7 +352,7 @@ class DifferentialEvolution:
         for g in range(1, self.g_max+1):
             new_pop = pop.copy()
             new_fit = fitness.copy()
-
+            
             for i in range(self.NP):
                 # select r1, r2, r3 distinct and not equal to current index i
                 idxs = list(range(self.NP))
@@ -401,3 +397,94 @@ class DifferentialEvolution:
                 history["pop"].append(pop.copy())
 
         return (best, best_f, history) if record_history else (best, best_f)
+    
+class ParticleSwarmOptimizer:
+    """Particle Swarm Optimization (global-best PSO) for minimization."""
+    def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray],
+                 pop_size: int = 50, w: float = 0.7, c1: float = 1.5, c2: float = 1.5,
+                 v_max: Optional[float] = None, max_iter: int = 200, seed: Optional[int] = None,
+                 w_decay: bool = False):
+        self.func = func
+        self.lb = np.asarray(bounds[0], dtype=float)
+        self.ub = np.asarray(bounds[1], dtype=float)
+        if self.lb.shape != self.ub.shape:
+            raise ValueError("lb and ub must have same shape")
+        self.d = self.lb.size
+        self.pop_size = int(pop_size)
+
+        self.w = w # inertia weight
+        self.w_decay = bool(w_decay) # whether to decay inertia weight over iterations
+        if self.w_decay and (not hasattr(self.w, "__iter__")):
+            self.w = (0.9, 0.4) # default decay if user set w_decay True but gave single w
+
+        self.v_max = 0.2 * (self.ub - self.lb) if v_max is None else np.asarray(v_max, dtype=float)
+        self.c1 = float(c1) # cognitive coefficient
+        self.c2 = float(c2) # social coefficient
+        self.max_iter = int(max_iter) # max iterations
+        self.rng = np.random.default_rng(seed) # RNG for reproducibility
+
+    def _init_swarm(self):
+        """Initialize positions and velocities."""
+        X = self.rng.uniform(self.lb, self.ub, size=(self.pop_size, self.d))
+        V = self.rng.uniform(-1.0, 1.0, size=(self.pop_size, self.d)) * self.v_max.reshape(1, -1)
+        return X, V
+
+    def run(self, record_history: bool = True):
+        """Execute PSO. Returns best position, best value, and history (if requested)."""
+        X, V = self._init_swarm()
+        # evaluate initial positions (vectorized)
+        fitness = np.asarray(self.func(X))
+        pbest = X.copy()
+        pbest_f = fitness.copy()
+        gbest_idx = int(np.argmin(pbest_f))
+        gbest = pbest[gbest_idx].copy()
+        gbest_f = float(pbest_f[gbest_idx])
+
+        history = {"best_x":[gbest.copy()], "best_f":[gbest_f]} if record_history else None
+
+        for t in range(self.max_iter):
+            # calculate current inertia weight
+            if self.w_decay and hasattr(self.w, "__iter__"):
+                w0, wf = self.w
+                w = w0 + (wf - w0) * (t / max(1, self.max_iter-1))
+            elif hasattr(self.w, "__iter__"):
+                w0, wf = self.w
+                w = w0 + (wf - w0) * (t / max(1, self.max_iter-1))
+            else:
+                w = float(self.w)
+
+            r1 = self.rng.random(size=(self.pop_size, self.d))
+            r2 = self.rng.random(size=(self.pop_size, self.d))
+
+            # velocity update
+            cognitive = self.c1 * r1 * (pbest - X)
+            social = self.c2 * r2 * (gbest.reshape(1, -1) - X)
+            V = w * V + cognitive + social
+
+            # clamp velocity
+            V = np.clip(V, -self.v_max.reshape(1, -1), self.v_max.reshape(1, -1))
+
+            # position update + bounds enforcement
+            X = X + V
+            X = np.clip(X, self.lb, self.ub)
+
+            # evaluate
+            fitness = np.asarray(self.func(X))
+
+            # update personal bests
+            better = fitness < pbest_f
+            if np.any(better):
+                pbest[better] = X[better]
+                pbest_f[better] = fitness[better]
+
+            # update global best
+            cur_best_idx = int(np.argmin(pbest_f))
+            if pbest_f[cur_best_idx] < gbest_f:
+                gbest_f = float(pbest_f[cur_best_idx])
+                gbest = pbest[cur_best_idx].copy()
+
+            if record_history:
+                history["best_x"].append(gbest.copy())
+                history["best_f"].append(gbest_f)
+
+        return (gbest, gbest_f, history) if record_history else (gbest, gbest_f)
