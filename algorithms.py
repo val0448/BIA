@@ -432,7 +432,7 @@ class ParticleSwarmOptimizer:
     def run(self, record_history: bool = True):
         """Execute PSO. Returns best position, best value, and history (if requested)."""
         X, V = self._init_swarm()
-        # evaluate initial positions (vectorized)
+        # evaluate initial positions
         fitness = np.asarray(self.func(X))
         pbest = X.copy()
         pbest_f = fitness.copy()
@@ -444,14 +444,11 @@ class ParticleSwarmOptimizer:
 
         for t in range(self.max_iter):
             # calculate current inertia weight
-            if self.w_decay and hasattr(self.w, "__iter__"):
-                w0, wf = self.w
-                w = w0 + (wf - w0) * (t / max(1, self.max_iter-1))
-            elif hasattr(self.w, "__iter__"):
+            if self.w_decay or hasattr(self.w, "__iter__"):
                 w0, wf = self.w
                 w = w0 + (wf - w0) * (t / max(1, self.max_iter-1))
             else:
-                w = float(self.w)
+                w = float(self.w)   
 
             r1 = self.rng.random(size=(self.pop_size, self.d))
             r2 = self.rng.random(size=(self.pop_size, self.d))
@@ -488,3 +485,87 @@ class ParticleSwarmOptimizer:
                 history["best_f"].append(gbest_f)
 
         return (gbest, gbest_f, history) if record_history else (gbest, gbest_f)
+
+class SOMA:
+    """SOMA (All-to-One variant) for minimization."""
+    def __init__(self, func: Callable[[np.ndarray], float], bounds: Tuple[np.ndarray, np.ndarray], NP: int = 50, step: float = 0.11,
+                 PRT: float = 0.1, path_length: float = 3.0, migrations: int = 200, seed: Optional[int] = None):
+        self.func = func
+        self.lb = np.asarray(bounds[0], dtype=float)
+        self.ub = np.asarray(bounds[1], dtype=float)
+        self.d = self.lb.size
+        self.NP = int(NP)
+        self.step = float(step)
+        self.PRT = float(PRT)
+        self.path_length = float(path_length)
+        self.migrations = int(migrations)
+        self.rng = np.random.default_rng(seed)
+
+    def _init_population(self):
+        """Uniform initial population in bounds: shape (NP, d)."""
+        return self.rng.uniform(self.lb, self.ub, size=(self.NP, self.d))
+
+    def _ensure_prt_mask(self):
+        """Return a boolean mask of length d with PRT probability. Guarantee at least one (dim) True ."""
+        mask = self.rng.random(self.d) < self.PRT
+        if not np.any(mask):
+            mask[self.rng.integers(0, self.d)] = True
+        return mask
+
+    def run(self, record_history: bool = True):
+        """Execute SOMA All-to-One."""
+        # initialize
+        pop = self._init_population()  # (NP, d)
+        fitness = np.asarray(self.func(pop))  # (NP,)
+        best_idx = int(np.argmin(fitness))
+        best_x = pop[best_idx].copy()
+        best_f = float(fitness[best_idx])
+        history = {"best_x": [best_x.copy()], "best_f": [best_f], "pop": [pop.copy()]} if record_history else None
+
+        steps = np.arange(self.step, self.path_length + 1e-12, self.step)  # e.g., [0.11, 0.22, ...]
+
+        for mig in range(1, self.migrations + 1):
+            # Leader (best-so-far)
+            leader_idx = int(np.argmin(fitness))
+            leader = pop[leader_idx].copy()
+
+            # For each individual (all-to-one) attempt migration toward leader
+            for i in range(self.NP):
+                if i == leader_idx:
+                    continue  # leader does not move
+
+                x = pop[i].copy()
+                # build the perturbation mask for this migrant
+                prt_mask = self._ensure_prt_mask()  # boolean array length d
+
+                # generate candidate points along the path for this individual
+                direction = (leader - x) * prt_mask  # movement only in masked dims
+
+                # Create array of candidate points: (n_steps, d)
+                candidates = x.reshape(1, -1) + np.outer(steps, direction)  # steps[:,None] * direction[None,:]
+                candidates = np.clip(candidates, self.lb, self.ub)  # Clip to bounds
+
+                # Find best candidate along path
+                vals = np.asarray(self.func(candidates))  # shape (n_steps,)
+                idx_best = int(np.argmin(vals))
+                best_candidate = candidates[idx_best]
+                best_candidate_val = float(vals[idx_best])
+
+                # Greedy replacement for the individual if candidate better than current
+                if best_candidate_val <= fitness[i]:
+                    pop[i] = best_candidate
+                    fitness[i] = best_candidate_val
+                    # possibly update overall best
+                    if best_candidate_val < best_f:
+                        best_f = best_candidate_val
+                        best_x = best_candidate.copy()
+
+            # Optionally update history
+            if record_history:
+                history["best_x"].append(best_x.copy())
+                history["best_f"].append(best_f)
+                history["pop"].append(pop.copy())
+
+        if record_history:
+            return best_x, best_f, history
+        return best_x, best_f
