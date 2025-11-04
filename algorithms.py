@@ -569,3 +569,89 @@ class SOMA:
         if record_history:
             return best_x, best_f, history
         return best_x, best_f
+
+class ACO:
+    """Ant Colony Optimization for TSP."""
+    def __init__(self, cities, n_ants: Optional[int] = None, n_iterations: int = 200,
+                 alpha: float = 1.0, beta: float = 5.0, rho: float = 0.5, Q: float = 1.0, seed: Optional[int] = None):
+        self.cities = cities
+        self.n = cities.n
+        self.dist = cities.distance_matrix()
+        # visibility (eta)
+        eps = 1e-12
+        self.eta = np.zeros_like(self.dist)
+        nz = self.dist > 0
+        self.eta[nz] = 1.0 / (self.dist[nz] + eps)
+        self.alpha = float(alpha)
+        self.beta = float(beta)
+        self.rho = float(rho)
+        self.Q = float(Q)
+        self.n_ants = int(n_ants) if n_ants is not None else self.n
+        self.n_iterations = int(n_iterations)
+        self.rng = np.random.default_rng(seed)
+        # pheromone matrix (symmetric) - initialize to small positive constant
+        self.tau0 = 1.0
+        self.tau = np.full((self.n, self.n), self.tau0, dtype=float)
+        np.fill_diagonal(self.tau, 0.0)
+
+    def _construct_solution(self, start: int):
+        """Construct a tour for a single ant using probabilistic selection."""
+        tour = [start]
+        visited = np.zeros(self.n, dtype=bool)
+        visited[start] = True
+        for _ in range(self.n - 1):
+            current = tour[-1]
+            candidates = np.where(~visited)[0]
+            # probabilities
+            tau_vals = self.tau[current, candidates] ** self.alpha # pheromone influence
+            eta_vals = self.eta[current, candidates] ** self.beta # heuristic influence
+            weight = tau_vals * eta_vals
+            s = weight.sum()
+            probs = weight / s if s > 0 else np.full_like(weight, 1.0 / weight.size)
+            # random selection
+            next_city = int(self.rng.choice(candidates, p=probs))
+            tour.append(next_city)
+            visited[next_city] = True
+        return tour
+
+    def run(self, record_history: bool = True):
+        """Run ACO."""
+        best_tour = None
+        best_len = float('inf')
+        history = {"best_tour": [], "best_len": [], "pop_tours": []} if record_history else None
+
+        for it in range(self.n_iterations):
+            # 1) construct tours for all ants (start positions may be random or cyclical)
+            tours = []
+            lengths = np.zeros(self.n_ants, dtype=float)
+            starts = self.rng.integers(0, self.n, size=self.n_ants)
+            for k in range(self.n_ants):
+                tour = np.asarray(self._construct_solution(int(starts[k])), dtype=int)
+                L = self.cities.total_distance(tour)
+                tours.append(tour)
+                lengths[k] = L
+                if L < best_len:
+                    best_len = float(L)
+                    best_tour = tour.copy()
+
+            # 2) pheromone evaporation
+            self.tau *= (1.0 - self.rho)
+
+            # 3) pheromone deposit: for each ant, add Q / length on edges visited
+            for tour, L in zip(tours, lengths):
+                deposit = self.Q / (L + 1e-12)
+                for i in range(len(tour)):
+                    a = tour[i]
+                    b = tour[(i+1) % len(tour)]
+                    self.tau[a, b] += deposit
+                    self.tau[b, a] += deposit  # maintain symmetry
+
+            # 4) clip tau
+            self.tau = np.clip(self.tau, 1e-12, 1e12)
+
+            if record_history:
+                history["best_tour"].append(best_tour.copy())
+                history["best_len"].append(best_len)
+                history["pop_tours"].append(tours)
+
+        return (best_tour, best_len, history) if record_history else (best_tour, best_len)
