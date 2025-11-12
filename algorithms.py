@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Callable, Tuple, Optional
+from typing import Callable, Tuple, Optional, List, Any, Dict
 from functions import Cities
 
 class BlindSearch:
@@ -577,9 +577,8 @@ class ACO:
         self.cities = cities
         self.n = cities.n
         self.dist = cities.distance_matrix()
-        # visibility (eta)
         eps = 1e-12
-        self.eta = np.zeros_like(self.dist)
+        self.eta = np.zeros_like(self.dist) # distance information (1/distance)
         nz = self.dist > 0
         self.eta[nz] = 1.0 / (self.dist[nz] + eps)
         self.alpha = float(alpha)
@@ -591,7 +590,7 @@ class ACO:
         self.rng = np.random.default_rng(seed)
         # pheromone matrix (symmetric) - initialize to small positive constant
         self.tau0 = 1.0
-        self.tau = np.full((self.n, self.n), self.tau0, dtype=float)
+        self.tau = np.full((self.n, self.n), self.tau0, dtype=float) # pheromone levels
         np.fill_diagonal(self.tau, 0.0)
 
     def _construct_solution(self, start: int):
@@ -604,7 +603,7 @@ class ACO:
             candidates = np.where(~visited)[0]
             # probabilities
             tau_vals = self.tau[current, candidates] ** self.alpha # pheromone influence
-            eta_vals = self.eta[current, candidates] ** self.beta # heuristic influence
+            eta_vals = self.eta[current, candidates] ** self.beta # distance influence
             weight = tau_vals * eta_vals
             s = weight.sum()
             probs = weight / s if s > 0 else np.full_like(weight, 1.0 / weight.size)
@@ -644,10 +643,7 @@ class ACO:
                     a = tour[i]
                     b = tour[(i+1) % len(tour)]
                     self.tau[a, b] += deposit
-                    self.tau[b, a] += deposit  # maintain symmetry
-
-            # 4) clip tau
-            self.tau = np.clip(self.tau, 1e-12, 1e12)
+                    self.tau[b, a] += deposit
 
             if record_history:
                 history["best_tour"].append(best_tour.copy())
@@ -655,3 +651,378 @@ class ACO:
                 history["pop_tours"].append(tours)
 
         return (best_tour, best_len, history) if record_history else (best_tour, best_len)
+    
+class FireflyAlgorithm:
+    """Firefly Algorithm for minimization."""
+    def __init__(self, func: Callable[[np.ndarray], np.ndarray], bounds: Tuple[np.ndarray, np.ndarray], n: int = 20, 
+                 alpha: float = 0.3, beta0: float = 1.0, gamma: float = 1.0, max_iter: int = 100, seed: Optional[int] = None):
+        self.func = func
+        self.lb = np.asarray(bounds[0], dtype=float)
+        self.ub = np.asarray(bounds[1], dtype=float)
+        self.d = self.lb.size
+        self.n = int(n)
+        self.alpha = float(alpha)
+        self.beta0 = float(beta0)
+        self.gamma = float(gamma)
+        self.max_iter = int(max_iter)
+        self.rng = np.random.default_rng(seed)
+
+    def _init_fireflies(self):
+        return self.rng.uniform(self.lb, self.ub, size=(self.n, self.d))
+
+    def _attractiveness(self, dist):
+        return self.beta0 * np.exp(-self.gamma * dist)
+
+    def run(self, record_history: bool = True):
+        # initialize population and evaluate
+        X = self._init_fireflies()
+        fitness = np.asarray(self.func(X))
+        best_idx = int(np.argmin(fitness))
+        best_x = X[best_idx].copy()
+        best_f = float(fitness[best_idx])
+        history = {"best_x":[best_x.copy()], "best_f":[best_f], "pop":[X.copy()]} if record_history else None
+
+        for t in range(1, self.max_iter+1):
+            best_idx = int(np.argmin(fitness))
+            # best firefly random trial
+            x_best = X[best_idx].copy()
+            trial = x_best + self.alpha * self.rng.normal(size=self.d)
+            trial = np.clip(trial, self.lb, self.ub)
+            f_trial = float(self.func(trial))
+            if f_trial < fitness[best_idx]:
+                X[best_idx] = trial
+                fitness[best_idx] = f_trial
+                if f_trial < best_f:
+                    best_f = f_trial
+                    best_x = trial.copy()
+
+            # move each firefly i toward all brighter fireflies j
+            for i in range(self.n):
+                for j in range(self.n):
+                    if fitness[j] < fitness[i]:
+                        dist = np.sum((X[i] - X[j])**2)
+                        beta = self._attractiveness(dist)
+                        X[i] = X[i] + beta * (X[j] - X[i]) + self.alpha * self.rng.normal(size=self.d) #* (self.ub - self.lb)
+                        X[i] = np.clip(X[i], self.lb, self.ub)
+                        # evaluate new position
+                        fitness[i] = float(self.func(X[i]))
+                        if fitness[i] < best_f:
+                            best_f = fitness[i]
+                            best_x = X[i].copy()
+
+            if record_history:
+                history["best_x"].append(best_x.copy())
+                history["best_f"].append(best_f)
+                history["pop"].append(X.copy())
+
+        return (best_x, best_f, history) if record_history else (best_x, best_f)
+    
+class TLBO:
+    """Teaching-Learning Based Optimization (TLBO) for minimization."""
+    def __init__(self, func: Callable[[np.ndarray], np.ndarray], bounds: Tuple[np.ndarray, np.ndarray],
+                 NP: int = 30, Max_OFE: int = 3000, seed: Optional[int] = None):
+        self.func = func
+        self.lb = np.asarray(bounds[0], dtype=float)
+        self.ub = np.asarray(bounds[1], dtype=float)
+        if self.lb.shape != self.ub.shape:
+            raise ValueError("Bounds (lb, ub) must have same shape")
+        self.d = self.lb.size
+        self.NP = int(NP)
+        self.Max_OFE = int(Max_OFE)
+        self.rng = np.random.default_rng(seed)
+
+    def _init_population(self):
+        return self.rng.uniform(self.lb, self.ub, size=(self.NP, self.d))
+
+    def run(self, record_history: bool = True):
+        """Execute TLBO."""
+        # Initialize population and evaluate (vectorized)
+        X = self._init_population()                              # (NP, d)
+        fitness = np.asarray(self.func(X))                       # (NP,)
+        evals = self.NP                                          # initial evaluations
+        best_idx = int(np.argmin(fitness))
+        best_x = X[best_idx].copy()
+        best_f = float(fitness[best_idx])
+
+        history = {"best_x":[best_x.copy()], "best_f":[best_f], "evals":[evals]} if record_history else None
+
+        # Main loop: alternate Teacher and Learner phases until budget exhausted
+        while evals < self.Max_OFE:
+            # --- Teacher phase ---
+            # compute population mean M (vector)
+            M = np.mean(X, axis=0)
+            teacher_idx = int(np.argmin(fitness))
+            X_teacher = X[teacher_idx].copy()
+
+            # For each learner i: try teacher-updated solution
+            for i in range(self.NP):
+                if evals >= self.Max_OFE:
+                    break
+                T = int(self.rng.integers(1, 3))   # 1 or 2
+                r = float(self.rng.random())       # uniform [0,1)
+                diff = r * (X_teacher - T * M)    # Difference term from teacher phase
+                X_new = X[i] + diff
+                # enforce bounds
+                X_new = np.clip(X_new, self.lb, self.ub)
+                # evaluate candidate
+                f_new = float(self.func(X_new))
+                evals += 1
+                # accept if better
+                if f_new < fitness[i]:
+                    X[i] = X_new
+                    fitness[i] = f_new
+                    if f_new < best_f:
+                        best_f = f_new
+                        best_x = X_new.copy()
+
+            # --- Learner phase ---
+            # Each learner i interacts with a randomly selected student j != i
+            for i in range(self.NP):
+                if evals >= self.Max_OFE:
+                    break
+                # pick random j != i (uniform among indices except i)
+                choices = np.delete(np.arange(self.NP), i)
+                j = int(self.rng.choice(choices))
+                r = float(self.rng.random())
+                if fitness[j] < fitness[i]:
+                    # move toward better peer
+                    X_new = X[i] + r * (X[j] - X[i])
+                else:
+                    # move away (exploit other direction)
+                    X_new = X[i] + r * (X[i] - X[j])
+                X_new = np.clip(X_new, self.lb, self.ub)
+                f_new = float(self.func(X_new))
+                evals += 1
+                if f_new < fitness[i]:
+                    X[i] = X_new
+                    fitness[i] = f_new
+                    if f_new < best_f:
+                        best_f = f_new
+                        best_x = X_new.copy()
+
+            # record snapshot after full generation
+            if record_history:
+                history["best_x"].append(best_x.copy())
+                history["best_f"].append(best_f)
+                history["evals"].append(evals)
+
+        return (best_x, best_f, history) if record_history else (best_x, best_f)
+    
+# --- NSGA2 Helpers: dominance, non-dominated sorting, crowding distance ---
+def dominates(a_obj: np.ndarray, b_obj: np.ndarray) -> bool:
+    """Return True if a dominates b for minimization problems."""
+    return np.all(a_obj <= b_obj) and np.any(a_obj < b_obj)
+
+def fast_non_dominated_sort(objs: np.ndarray) -> List[List[int]]:
+    """ Fast non-dominated sorting, takes objs shape (N-individuals, M-objectives), outputs list of fronts (each front is a list of indices)."""
+    N = objs.shape[0]
+    S = [[] for _ in range(N)]    # S[p] = set of solutions dominated by p
+    n = np.zeros(N, dtype=int)   # n[p] = number of solutions that dominate p
+    fronts: List[List[int]] = []
+
+    # Build S and n
+    for p in range(N):
+        for q in range(N):
+            if p == q:
+                continue
+            if dominates(objs[p], objs[q]):
+                S[p].append(q)
+            elif dominates(objs[q], objs[p]):
+                n[p] += 1
+        if n[p] == 0:
+            fronts.append([p])
+
+    # Extract subsequent fronts
+    i = 0
+    while i < len(fronts):
+        next_front = []
+        for p in fronts[i]:
+            for q in S[p]:
+                n[q] -= 1
+                if n[q] == 0:
+                    next_front.append(q)
+        if next_front:
+            fronts.append(next_front)
+        i += 1
+
+    return fronts
+
+def crowding_distance(objs: np.ndarray, front: List[int]) -> np.ndarray:
+    """Crowding distance for solutions in 'front' using their objective vectors in 'objs', returns array with distance for each solution in the same order as 'front'."""
+    if len(front) == 0:
+        return np.array([], dtype=float)
+    M = objs.shape[1]
+    distances = np.zeros(len(front), dtype=float)
+    for m in range(M):
+        vals = objs[front, m]
+        order = np.argsort(vals)
+        sorted_vals = vals[order]
+        distances[order[0]] = np.inf
+        distances[order[-1]] = np.inf
+        denom = sorted_vals[-1] - sorted_vals[0]
+        if denom == 0:
+            continue
+        for k in range(1, len(front)-1):
+            distances[order[k]] += (sorted_vals[k+1] - sorted_vals[k-1]) / denom
+    return distances
+
+# --- NSGA2 Genetic operators: SBX crossover and polynomial mutation ---
+def sbx_crossover(p1: np.ndarray, p2: np.ndarray, eta_c: float = 20.0, rng: Optional[np.random.Generator] = None):
+    """Simulated Binary Crossover (SBX) for real-coded parents p1, p2, returns two children."""
+    if rng is None:
+        rng = np.random.default_rng()
+    d = p1.size
+    c1 = p1.copy()
+    c2 = p2.copy()
+    for i in range(d):
+        if rng.random() <= 0.5:
+            if abs(p1[i] - p2[i]) > 1e-14:
+                u = rng.random()
+                if u <= 0.5:
+                    beta = (2*u)**(1.0/(eta_c+1))
+                else:
+                    beta = (1.0/(2*(1-u)))**(1.0/(eta_c+1))
+                # children
+                c1[i] = 0.5 * ((1 + beta) * p1[i] + (1 - beta) * p2[i])
+                c2[i] = 0.5 * ((1 - beta) * p1[i] + (1 + beta) * p2[i])
+            else:
+                c1[i] = p1[i]; c2[i] = p2[i]
+        else:
+            c1[i] = p1[i]; c2[i] = p2[i]
+    return c1, c2
+
+def polynomial_mutation(x: np.ndarray, lb: np.ndarray, ub: np.ndarray, eta_m: float = 20.0,
+                       pm: Optional[float] = None, rng: Optional[np.random.Generator] = None):
+    """Polynomial mutation (Deb and Goyal). pm is per-gene mutation probability (default 1/d)."""
+    if rng is None:
+        rng = np.random.default_rng()
+    y = x.copy()
+    d = x.size
+    if pm is None:
+        pm = 1.0 / d
+    for i in range(d):
+        if rng.random() < pm:
+            xi = x[i]; yl = lb[i]; yu = ub[i]
+            if yu <= yl:
+                continue
+            delta1 = (xi - yl) / (yu - yl)
+            delta2 = (yu - xi) / (yu - yl)
+            r = rng.random()
+            mut_pow = 1.0 / (eta_m + 1.0)
+            if r < 0.5:
+                xy = 1.0 - delta1
+                val = 2.0 * r + (1.0 - 2.0*r) * (xy**(eta_m+1))
+                delta_q = val**mut_pow - 1.0
+            else:
+                xy = 1.0 - delta2
+                val = 2.0*(1.0 - r) + 2.0*(r - 0.5) * (xy**(eta_m+1))
+                delta_q = 1.0 - val**mut_pow
+            y[i] = xi + delta_q * (yu - yl)
+            # clip safety
+            if y[i] < yl: y[i] = yl
+            if y[i] > yu: y[i] = yu
+    return y
+
+class NSGA2:
+    """NSGA-II implementation for continuous multiobjective minimization."""
+    def __init__(self, func: Callable[[np.ndarray], np.ndarray], bounds: Tuple[np.ndarray, np.ndarray], pop_size: int = 100, generations: int = 250,
+                 eta_c: float = 20.0, eta_m: float = 20.0, crossover_prob: float = 0.9, mutation_prob: Optional[float] = None, seed: Optional[int] = None):
+        self.func = func
+        self.lb = np.asarray(bounds[0], dtype=float)
+        self.ub = np.asarray(bounds[1], dtype=float)
+        self.d = self.lb.size
+        self.pop_size = int(pop_size)
+        self.generations = int(generations)
+        self.eta_c = float(eta_c)
+        self.eta_m = float(eta_m)
+        self.pc = float(crossover_prob)
+        self.pm = mutation_prob if mutation_prob is not None else 1.0/self.d
+        self.rng = np.random.default_rng(seed)
+
+    def _init_pop(self) -> np.ndarray:
+        """Initialize population uniformly in bounds."""
+        return self.rng.uniform(self.lb, self.ub, size=(self.pop_size, self.d))
+
+    def _evaluate(self, X: np.ndarray) -> np.ndarray:
+        """Evaluate population X using objective function (vectorized)."""
+        out = np.asarray(self.func(X))
+        if out.ndim == 1:
+            out = out.reshape(-1, 1)
+        return out
+
+    def _create_offspring(self, pop_vars: np.ndarray, pop_objs: np.ndarray) -> np.ndarray:
+        """Create offspring population using tournament selection, SBX crossover, and polynomial mutation."""
+        N = pop_vars.shape[0]
+        children: List[np.ndarray] = []
+
+        # compute ranks & crowding distances for tournament selection
+        fronts = fast_non_dominated_sort(pop_objs)
+        rank = np.empty(N, dtype=int)
+        for r, front in enumerate(fronts):
+            for idx in front:
+                rank[idx] = r
+        crowd = np.zeros(N, dtype=float)
+        for front in fronts:
+            cd = crowding_distance(pop_objs, front)
+            crowd[np.array(front)] = cd
+
+        def tournament():
+            a, b = self.rng.integers(0, N, size=2)
+            if rank[a] < rank[b]:
+                return a
+            elif rank[b] < rank[a]:
+                return b
+            else:
+                return a if crowd[a] > crowd[b] else b
+
+        # produce N children
+        while len(children) < N:
+            p1 = pop_vars[tournament()].copy()
+            p2 = pop_vars[tournament()].copy()
+            if self.rng.random() < self.pc:
+                c1, c2 = sbx_crossover(p1, p2, eta_c=self.eta_c, rng=self.rng)
+            else:
+                c1, c2 = p1.copy(), p2.copy()
+            c1 = polynomial_mutation(c1, self.lb, self.ub, eta_m=self.eta_m, pm=self.pm, rng=self.rng)
+            c2 = polynomial_mutation(c2, self.lb, self.ub, eta_m=self.eta_m, pm=self.pm, rng=self.rng)
+            children.append(np.clip(c1, self.lb, self.ub))
+            if len(children) < N:
+                children.append(np.clip(c2, self.lb, self.ub))
+
+        return np.array(children[:N])
+
+    def run(self, return_history: bool = False) -> Tuple[np.ndarray, np.ndarray, Optional[Dict[str, Any]]]:
+        """Run NSGA-II. Returns final population variables, objectives, and optional history dict."""
+        pop = self._init_pop()
+        pop_objs = self._evaluate(pop)
+        history = {"pop": [], "objs": []} if return_history else None
+
+        for gen in range(self.generations):
+            offspring = self._create_offspring(pop, pop_objs)
+            off_objs = self._evaluate(offspring)
+            combined_vars = np.vstack([pop, offspring])
+            combined_objs = np.vstack([pop_objs, off_objs])
+            fronts = fast_non_dominated_sort(combined_objs)
+
+            new_pop_vars: List[np.ndarray] = []
+            new_pop_objs: List[np.ndarray] = []
+            for front in fronts:
+                if len(new_pop_vars) + len(front) <= self.pop_size:
+                    new_pop_vars.extend(combined_vars[front].tolist())
+                    new_pop_objs.extend(combined_objs[front].tolist())
+                else:
+                    remaining = self.pop_size - len(new_pop_vars)
+                    cd = crowding_distance(combined_objs, front)
+                    order = np.argsort(-cd)  # descending crowding distance
+                    chosen = [front[i] for i in order[:remaining]]
+                    new_pop_vars.extend(combined_vars[chosen].tolist())
+                    new_pop_objs.extend(combined_objs[chosen].tolist())
+                    break
+
+            pop = np.array(new_pop_vars)
+            pop_objs = np.array(new_pop_objs)
+            if return_history:
+                history["pop"].append(pop.copy())
+                history["objs"].append(pop_objs.copy())
+
+        return pop, pop_objs, history

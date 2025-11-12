@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import animation
 from functions import registry
-from typing import Callable, Sequence
+from typing import Callable, Sequence, Optional
 from IPython.display import HTML, display
 import ipywidgets as widgets
 from PIL import Image
@@ -322,3 +322,107 @@ def display_gif_frame_by_frame(gif_path, width=600):
 
     controls = widgets.HBox([slider])
     display(widgets.VBox([img_widget, controls])) 
+
+def animate_population_on_heatmap(func: Callable[[np.ndarray], np.ndarray], lb: np.ndarray, ub: np.ndarray, populations: Sequence[np.ndarray],
+                                  save_path: str = "population_animation.gif", grid: int = 160, interval: int = 200, trail: bool = True, cmap: str = "viridis"):
+    """Animate movement of particles across a 2D heatmap."""
+
+    lb = np.asarray(lb, dtype=float)
+    ub = np.asarray(ub, dtype=float)
+    pops = np.asarray(populations, dtype=float)
+    if pops.ndim != 3 or pops.shape[2] != 2:
+        raise ValueError("populations must be shape (n_frames, NP, 2)")
+
+    n_frames, NP, _ = pops.shape
+
+    # Build grid and heatmap Z (vectorized)
+    xs = np.linspace(lb[0], ub[0], grid)
+    ys = np.linspace(lb[1], ub[1], grid)
+    X, Y = np.meshgrid(xs, ys)
+    pts = np.stack([X.ravel(), Y.ravel()], axis=1)
+
+    # func may accept (n,d) arrays; handle both vectorized and non-vectorized funcs
+    try:
+        Z = np.asarray(func(pts)).reshape(X.shape)
+    except Exception:
+        Z = np.array([float(func(p)) for p in pts]).reshape(X.shape)
+
+    # Setup plot
+    fig, ax = plt.subplots(figsize=(7, 6))
+    mesh = ax.pcolormesh(X, Y, Z, shading='auto', cmap=cmap)
+    fig.colorbar(mesh, ax=ax, label='f(x)')
+
+    # scatter for current positions
+    scat = ax.scatter([], [], s=40, c='red', edgecolors='black', zorder=10)
+    # optional trails: one Line2D per particle
+    trails = [ax.plot([], [], lw=1.2, alpha=0.9)[0] for _ in range(NP)] if trail else []
+
+    ax.set_xlim(lb[0], ub[0])
+    ax.set_ylim(lb[1], ub[1])
+    ax.set_xlabel('x1'); ax.set_ylabel('x2')
+    ax.set_title('Particle movements')
+
+    # init function for animation
+    def init():
+        scat.set_offsets(np.empty((0, 2)))
+        for tr in trails:
+            tr.set_data([], [])
+        return (scat, *trails) if trail else (scat,)
+
+    # update for frame i
+    def update(i):
+        pos = pops[i]  # (NP,2)
+        scat.set_offsets(pos)
+        if trail:
+            for k in range(NP):
+                traj = pops[:i+1, k, :]  # positions up to frame i
+                trails[k].set_data(traj[:, 0], traj[:, 1])
+        ax.set_title(f"Frame {i+1}/{n_frames}")
+        return (scat, *trails) if trail else (scat,)
+
+    anim = animation.FuncAnimation(fig, update, frames=n_frames, init_func=init,
+                                   interval=interval, blit=True)
+
+    # Save GIF (pillow writer). This requires Pillow installed (pip install pillow).
+    try:
+        anim.save(save_path, writer='pillow', fps=max(1, 1000 // interval))
+        plt.close(fig)
+        print(f"Animation saved to: {save_path}")
+    except Exception as e:
+        plt.close(fig)
+        raise RuntimeError(f"Failed to save animation: {e}")
+
+    return save_path
+
+def plot_nsga2_pareto(pop_vars: np.ndarray, pop_objs: np.ndarray, pareto_idx: Optional[Sequence[int]] = None,
+                      show_decision_space: bool = True, figsize=(12,5)):
+    """
+    Plot objective space and decision space (r,h) and highlight Pareto set.
+    - pop_vars: (N,d)
+    - pop_objs: (N,2)
+    - pareto_idx: list/array of indices for Pareto front (if None, will compute nondominated)
+    """
+    from algorithms import fast_non_dominated_sort
+    if pareto_idx is None:
+        fronts = fast_non_dominated_sort(pop_objs)
+        pareto_idx = fronts[0]
+
+    fig, axes = plt.subplots(1, 2 if show_decision_space else 1, figsize=figsize)
+    if show_decision_space:
+        ax_obj, ax_dec = axes
+    else:
+        ax_obj = axes
+
+    # objective space
+    ax_obj.scatter(pop_objs[:,0], pop_objs[:,1], s=30, alpha=0.6, label='population')
+    ax_obj.scatter(pop_objs[pareto_idx,0], pop_objs[pareto_idx,1], s=60, color='red', label='Pareto')
+    ax_obj.set_xlabel('Objective 1'); ax_obj.set_ylabel('Objective 2'); ax_obj.set_title('Objective space')
+    ax_obj.legend()
+
+    if show_decision_space:
+        ax_dec.scatter(pop_vars[:,0], pop_vars[:,1], s=30, alpha=0.6, label='population (r,h)')
+        ax_dec.scatter(pop_vars[pareto_idx,0], pop_vars[pareto_idx,1], s=60, color='red', label='Pareto')
+        ax_dec.set_xlabel('r'); ax_dec.set_ylabel('h'); ax_dec.set_title('Decision space (r vs h)')
+        ax_dec.legend()
+    plt.tight_layout()
+    return fig

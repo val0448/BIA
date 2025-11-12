@@ -91,6 +91,27 @@ def zakharov(x: np.ndarray):
     res = sum1 + sum2**2 + sum2**4
     return float(res[0]) if w1 else res
 
+def cone_objectives(X: np.ndarray) -> np.ndarray:
+    """
+    X: shape (N,2) or (2,) where columns are [r, h].
+    Objectives to minimize:
+      s = r + h
+      S = pi * r * s   (lateral surface)
+      T = pi * r * (r + s)  (total area)
+    Returns (N,2) array of objectives.
+    """
+    X = np.asarray(X)
+    single = False
+    if X.ndim == 1:
+        X = X.reshape(1, -1)
+        single = True
+    r = X[:, 0] 
+    h = X[:, 1]
+    s = np.sqrt(r**2 + h**2)
+    S = np.pi * r * s
+    T = np.pi * r * (r + s)
+    out = np.vstack([S, T]).T
+    return out[0] if single else out
 
 # --- registry ---
 def _make_bounds(d, lower, upper):
