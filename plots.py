@@ -396,12 +396,7 @@ def animate_population_on_heatmap(func: Callable[[np.ndarray], np.ndarray], lb: 
 
 def plot_nsga2_pareto(pop_vars: np.ndarray, pop_objs: np.ndarray, pareto_idx: Optional[Sequence[int]] = None,
                       show_decision_space: bool = True, figsize=(12,5)):
-    """
-    Plot objective space and decision space (r,h) and highlight Pareto set.
-    - pop_vars: (N,d)
-    - pop_objs: (N,2)
-    - pareto_idx: list/array of indices for Pareto front (if None, will compute nondominated)
-    """
+    """Plot objective space and decision space (r,h) and highlight Pareto set."""
     from algorithms import fast_non_dominated_sort
     if pareto_idx is None:
         fronts = fast_non_dominated_sort(pop_objs)

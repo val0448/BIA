@@ -699,16 +699,15 @@ class FireflyAlgorithm:
             # move each firefly i toward all brighter fireflies j
             for i in range(self.n):
                 for j in range(self.n):
-                    if fitness[j] < fitness[i]:
-                        dist = np.sum((X[i] - X[j])**2)
-                        beta = self._attractiveness(dist)
-                        X[i] = X[i] + beta * (X[j] - X[i]) + self.alpha * self.rng.normal(size=self.d) #* (self.ub - self.lb)
-                        X[i] = np.clip(X[i], self.lb, self.ub)
-                        # evaluate new position
-                        fitness[i] = float(self.func(X[i]))
-                        if fitness[i] < best_f:
-                            best_f = fitness[i]
-                            best_x = X[i].copy()
+                    dist = np.sum((X[i] - X[j])**2)
+                    beta = self._attractiveness(dist)
+                    X[i] = X[i] + beta * (X[j] - X[i]) + self.alpha * self.rng.normal(size=self.d)
+                    X[i] = np.clip(X[i], self.lb, self.ub)
+                    # evaluate new position
+                    fitness[i] = float(self.func(X[i]))
+                    if fitness[i] < best_f:
+                        best_f = fitness[i]
+                        best_x = X[i].copy()
 
             if record_history:
                 history["best_x"].append(best_x.copy())
@@ -724,8 +723,6 @@ class TLBO:
         self.func = func
         self.lb = np.asarray(bounds[0], dtype=float)
         self.ub = np.asarray(bounds[1], dtype=float)
-        if self.lb.shape != self.ub.shape:
-            raise ValueError("Bounds (lb, ub) must have same shape")
         self.d = self.lb.size
         self.NP = int(NP)
         self.Max_OFE = int(Max_OFE)
@@ -736,7 +733,7 @@ class TLBO:
 
     def run(self, record_history: bool = True):
         """Execute TLBO."""
-        # Initialize population and evaluate (vectorized)
+        # Initialize population and evaluate
         X = self._init_population()                              # (NP, d)
         fitness = np.asarray(self.func(X))                       # (NP,)
         evals = self.NP                                          # initial evaluations
@@ -813,7 +810,7 @@ def dominates(a_obj: np.ndarray, b_obj: np.ndarray) -> bool:
     """Return True if a dominates b for minimization problems."""
     return np.all(a_obj <= b_obj) and np.any(a_obj < b_obj)
 
-def fast_non_dominated_sort(objs: np.ndarray) -> List[List[int]]:
+def non_dominated_sort(objs: np.ndarray) -> List[List[int]]:
     """ Fast non-dominated sorting, takes objs shape (N-individuals, M-objectives), outputs list of fronts (each front is a list of indices)."""
     N = objs.shape[0]
     S = [[] for _ in range(N)]    # S[p] = set of solutions dominated by p
@@ -886,9 +883,11 @@ def sbx_crossover(p1: np.ndarray, p2: np.ndarray, eta_c: float = 20.0, rng: Opti
                 c1[i] = 0.5 * ((1 + beta) * p1[i] + (1 - beta) * p2[i])
                 c2[i] = 0.5 * ((1 - beta) * p1[i] + (1 + beta) * p2[i])
             else:
-                c1[i] = p1[i]; c2[i] = p2[i]
+                c1[i] = p1[i]
+                c2[i] = p2[i]
         else:
-            c1[i] = p1[i]; c2[i] = p2[i]
+            c1[i] = p1[i]
+            c2[i] = p2[i]
     return c1, c2
 
 def polynomial_mutation(x: np.ndarray, lb: np.ndarray, ub: np.ndarray, eta_m: float = 20.0,
@@ -956,7 +955,7 @@ class NSGA2:
         children: List[np.ndarray] = []
 
         # compute ranks & crowding distances for tournament selection
-        fronts = fast_non_dominated_sort(pop_objs)
+        fronts = non_dominated_sort(pop_objs)
         rank = np.empty(N, dtype=int)
         for r, front in enumerate(fronts):
             for idx in front:
@@ -1002,7 +1001,7 @@ class NSGA2:
             off_objs = self._evaluate(offspring)
             combined_vars = np.vstack([pop, offspring])
             combined_objs = np.vstack([pop_objs, off_objs])
-            fronts = fast_non_dominated_sort(combined_objs)
+            fronts = non_dominated_sort(combined_objs)
 
             new_pop_vars: List[np.ndarray] = []
             new_pop_objs: List[np.ndarray] = []
